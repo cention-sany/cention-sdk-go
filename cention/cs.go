@@ -13,8 +13,10 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/http/httputil"
-	"strconv"
 	"strings"
+
+	"github.com/google/jsonapi"
+	"github.com/mitchellh/mapstructure"
 )
 
 var (
@@ -30,6 +32,11 @@ const (
 	ANSWER_ERRAND event = 1
 )
 
+const (
+	normalAttachment = iota
+	areaArchiveAttachment
+)
+
 type CreatedResponse struct {
 	Data struct {
 		Type string `json:"type"`
@@ -37,18 +44,10 @@ type CreatedResponse struct {
 	} `json:"data"`
 }
 
-type GetJSONAPI struct {
-	Data struct {
-		ID              string `json:"id"`
-		Type            string `json:"type"`
-		json.RawMessage `json:"attributes"`
-	} `json:"data"`
-}
-
 type CE struct {
 	Data struct {
 		Type string `json:"type"`
-		Attr `json:"attr"`
+		Attr `json:"attributes"`
 	} `json:"data"`
 }
 
@@ -138,107 +137,101 @@ func CreateErrand(ctx context.Context, ep, tk string,
 }
 
 type Callback struct {
-	Data struct {
-		Type string `json:"type"`
-		ID   string `json:"id"`
-		Attr struct {
-			Event           int `json:"event"`
-			json.RawMessage `json:"event_data"`
-			XData           json.RawMessage `json:"event_xdata"`
-		} `json:"attributes"`
-	} `json:"data"`
+	*jsonapi.OnePayload
 	Meta *struct {
 		Secret string `json:"api_secret"`
 	} `json:"meta"`
 }
 
 func (c *Callback) AnswerErrand() (*AnswerErrand, error) {
-	if c.Data.Attr.Event != int(ANSWER_ERRAND) {
+	v, existOrOk := c.OnePayload.Data.Attributes["event"]
+	if !existOrOk {
 		return nil, ErrUnmatchEventType
 	}
-	v := new(AnswerErrand)
-	if err := json.Unmarshal((c.Data.Attr.RawMessage), v); err != nil {
-		return nil, err
+	var i float64
+	i, existOrOk = v.(float64)
+	if !existOrOk {
+		return nil, ErrUnmatchEventType
 	}
-	if len(c.Data.Attr.XData) > 0 {
-		vv := new(struct {
-			As attachmentSlice `json:"embedded_archives"`
-		})
-		if err := json.Unmarshal([]byte(c.Data.Attr.XData),
-			vv); err != nil {
-			return nil, err
+	if int(i) != int(ANSWER_ERRAND) {
+		return nil, ErrUnmatchEventType
+	}
+	var a *AnswerErrand
+	nodes := c.OnePayload.Included
+	as := make([]*attachmentNode, 0, len(nodes))
+	for _, n := range nodes {
+		switch n.Type {
+		case "c3_errand":
+			a = new(AnswerErrand)
+			if err := mapstructure.Decode(n.Attributes, a); err != nil {
+				return nil, err
+			}
+		case "c3_responseattachment":
+			addAttachment(&as, normalAttachment, n)
+		case "c3_areaarchive":
+			addAttachment(&as, areaArchiveAttachment, n)
 		}
-		v.areaArchive = vv.As
 	}
-	return v, nil
+	if a == nil {
+		return nil, errors.New("cention: no errand found")
+	} else if len(as) > 0 {
+		a.as = as
+	}
+	return a, nil
+}
+
+func addAttachment(an *[]*attachmentNode, t int, n *jsonapi.Node) {
+	var s string
+	if v, exist := (*n.Links)["self"]; exist {
+		s, _ = v.(string)
+	}
+	*an = append(*an, &attachmentNode{
+		id: n.ID, t: t, l: s,
+	})
 }
 
 type AnswerErrand struct {
-	ID     int `json:"c3_id"`
+	ID     int `mapstructure:"c3_id"`
 	Answer struct {
-		ID       int `json:"c3_id"`
+		ID       int `mapstructure:"c3_id"`
 		Response struct {
-			ID       int    `json:"c3_id"`
-			Body     string `json:"body"`
-			HtmlBody string `json:"htmlBody"`
-			Subject  string `json:"subject"`
+			ID       int    `mapstructure:"c3_id"`
+			Body     string `mapstructure:"body"`
+			HtmlBody string `mapstructure:"htmlBody"`
+			Subject  string `mapstructure:"subject"`
 			To       []struct {
-				ID      int    `json:"c3_id"`
-				Address string `json:"emailAddress"`
-				Name    string `json:"name"`
-			} `json:"to"`
-			As attachmentSlice `json:"attachments"`
-		} `json:"response"`
-	} `json:"answer"`
-	areaArchive         attachmentSlice
-	at                  *attachmentSlice
-	rq                  attachmentGetter
-	currAttachmentIndex int
-	err                 error
+				ID      int    `mapstructure:"c3_id"`
+				Address string `mapstructure:"emailAddress"`
+				Name    string `mapstructure:"name"`
+			} `mapstructure:"to"`
+		} `mapstructure:"response"`
+	} `mapstructure:"answer"`
+	as  []*attachmentNode
+	err error
 }
 
-type attachmentSlice []struct {
-	ID int `json:"c3_id"`
+type attachmentNode struct {
+	t     int
+	id, l string
 }
 
-type attachmentGetter interface {
-	get(context.Context, int, string, string) (io.ReadCloser, error)
-	next() bool
+func (a attachmentNode) get(ctx context.Context, ep, tk string) (io.ReadCloser,
+	error) {
+	if a.l == "" {
+		switch a.t {
+		case normalAttachment:
+			return req(ctx, a.id, ep, tk, getAttachmentREST)
+		case areaArchiveAttachment:
+			return req(ctx, a.id, ep, tk, getAAREST)
+		default:
+			return nil, errors.New("cention: unknown attachment type")
+		}
+	}
+	return httpReq(ctx, a.l, tk)
 }
 
-func newNormAttachment() normAttachment {
-	return normAttachment{}
-}
-
-type normAttachment struct{}
-
-func (normAttachment) get(ctx context.Context, n int, ep,
-	tk string) (io.ReadCloser, error) {
-	return req(ctx, n, ep, tk, getAttachmentREST)
-}
-
-func (normAttachment) next() bool {
-	return true
-}
-
-func newAreaArchive() areaArchive {
-	return areaArchive{}
-}
-
-type areaArchive struct{}
-
-func (areaArchive) get(ctx context.Context, n int, ep,
-	tk string) (io.ReadCloser, error) {
-	return req(ctx, n, ep, tk, getAAREST)
-}
-
-func (areaArchive) next() bool {
-	return false
-}
-
-func req(ctx context.Context, n int, ep, tk, p string) (io.ReadCloser, error) {
-	req, err := http.NewRequest(http.MethodGet, fmt.Sprint(ep, p, "/",
-		strconv.Itoa(n)), nil)
+func httpReq(ctx context.Context, ep, tk string) (io.ReadCloser, error) {
+	req, err := http.NewRequest(http.MethodGet, ep, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -252,43 +245,16 @@ func req(ctx context.Context, n int, ep, tk, p string) (io.ReadCloser, error) {
 	return resp.Body, nil
 }
 
+func req(ctx context.Context, id, ep, tk, p string) (io.ReadCloser, error) {
+	return httpReq(ctx, fmt.Sprint(ep, p, "/", id), tk)
+}
+
 func (a *AnswerErrand) MoreAttachment() (bool, error) {
 	if a.err != nil {
 		return false, a.err
 	}
-	as := len(a.Answer.Response.As)
-	aas := len(a.areaArchive)
-	if as == 0 && aas == 0 {
+	if len(a.as) == 0 {
 		return false, nil
-	}
-	if a.at == nil {
-		if as != 0 {
-			a.at = &a.Answer.Response.As
-			a.rq = newNormAttachment()
-			if DEBUG {
-				fmt.Println("Normal Attachment:", a.at)
-			}
-		} else {
-			a.at = &a.areaArchive
-			a.rq = newAreaArchive()
-			if DEBUG {
-				fmt.Println("Area Archive:", a.at)
-			}
-		}
-	} else {
-		if a.currAttachmentIndex >= len(*a.at) {
-			if a.at == &a.areaArchive || aas == 0 {
-				a.areaArchive = nil
-				return false, nil
-			}
-			a.Answer.Response.As = nil
-			a.at = &a.areaArchive
-			a.rq = newAreaArchive()
-			if DEBUG {
-				fmt.Println("Area Archive:", a.at)
-			}
-			a.currAttachmentIndex = 0
-		}
 	}
 	return true, nil
 }
@@ -303,34 +269,40 @@ func (a *AnswerErrand) GetNextAttachment(ctx context.Context, ep,
 	} else if !b {
 		return nil, ErrNoMoreAttachment
 	}
-	rc, err := a.rq.get(ctx, (*a.at)[a.currAttachmentIndex].ID, ep, tk)
+	rc, err := a.as[0].get(ctx, ep, tk)
 	if err != nil {
 		a.err = err
 		return nil, err
 	}
 	defer rc.Close()
-	v := new(GetJSONAPI)
+	v := new(jsonapi.OnePayload)
 	if err = json.NewDecoder(rc).Decode(v); err != nil {
 		a.err = err
 		return nil, err
 	}
-	vv := new(struct {
-		*Attachment `json:"attachment"`
-	})
-	if err = json.Unmarshal([]byte(v.Data.RawMessage), vv); err != nil {
+	vv, exist := v.Data.Attributes["attachment"]
+	if !exist {
+		return nil, errors.New("cention: no attachment key return")
+	}
+	m, ok := vv.(map[string]interface{})
+	if !ok {
+		return nil, errors.New("cention: no attachment map found")
+	}
+	aa := new(Attachment)
+	if err = mapstructure.Decode(m, aa); err != nil {
 		a.err = err
 		return nil, err
 	}
-	a.currAttachmentIndex++
-	return vv.Attachment, nil
+	a.as = a.as[1:]
+	return aa, nil
 }
 
 type Attachment struct {
-	Id         int    `json:"c3_id,omitempty"`
-	Ct         string `json:"content_type"`
-	Name       string `json:"name"`
-	B64Content string `json:"content"`
-	CID        string `json:"content_id,omitempty"`
+	Id         int    `json:"c3_id,omitempty" mapstructure:"c3_id"`
+	Ct         string `json:"content_type" mapstructure:"content_type"`
+	Name       string `json:"name" mapstructure:"name"`
+	B64Content string `json:"content" mapstructure:"content"`
+	CID        string `json:"content_id,omitempty" mapstructure:"content_id"`
 }
 
 func (a *Attachment) Content() (io.Reader, error) {
@@ -374,3 +346,150 @@ func Parse(r *http.Request) (*Callback, error) {
 func ParseWithSecret(r *http.Request, s string) (*Callback, error) {
 	return parseSecret(r, true, s)
 }
+
+// Sample create errand data
+// {
+//   "data": {
+//     "type": "c3_errand",
+//     "attributes": {
+//       "msg": {
+//         "message_id": "msgid_1485096554",
+//         "name": "Sany Liew",
+//         "from": "sany.liew@test.com.my",
+//         "subject": "Creating test errand via API",
+//         "body": "Test message body at Sun, 22 Jan 2017 22:49:14 +0800",
+//         "htmlBody": "",
+//         "attachments": [
+//           {
+//             "content_type": "text\/plain",
+//             "name": "tst1.txt",
+//             "content": "QXBwbGUgUGVuIFBpbmVhcHBsZSBQZW4="
+//           },
+//           {
+//             "content_type": "text\/plain",
+//             "name": "tst2.txt",
+//             "content": "T3JhbmdlIEp1aWNlIQ=="
+//           }
+//         ]
+//       }
+//     }
+//   }
+// }
+
+// SAMPLE - JSONAPI callback
+// {
+//   "data": {
+//     "type": "c3_callback_answer_errand",
+//     "id": "76",
+//     "attributes": {
+//       "event": 1
+//     },
+//     "relationships": {
+//       "errand": {
+//         "data": {
+//           "type": "c3_errand",
+//           "id": "2256"
+//         }
+//       }
+//     }
+//   },
+//   "included": [
+//     {
+//       "type": "c3_responseattachment",
+//       "id": "789",
+//       "attributes": {
+//         "c3_id": 789
+//       },
+//       "links": {
+//         "self": "http:\/\/localhost\/ng\/api\/json\/c3_responseattachment\/789"
+//       }
+//     },
+//     {
+//       "type": "c3_responseattachment",
+//       "id": "790",
+//       "attributes": {
+//         "c3_id": 790
+//       },
+//       "links": {
+//         "self": "http:\/\/localhost\/ng\/api\/json\/c3_responseattachment\/790"
+//       }
+//     },
+//     {
+//       "type": "c3_areaarchive",
+//       "id": "12",
+//       "attributes": {
+//         "c3_id": 12
+//       },
+//       "links": {
+//         "self": "http:\/\/localhost\/ng\/api\/json\/c3_areaarchive\/12"
+//       }
+//     },
+//     {
+//       "type": "c3_errand",
+//       "id": "2256",
+//       "attributes": {
+//         "answer": {
+//           "c3_id": 1189,
+//           "response": {
+//             "body": "text",
+//             "c3_id": 3304,
+//             "htmlBody": "<div style=\"font-size:;font-family:;\"><div>sadadad<img src=\"cid:12\" \/><img alt=\"\" src=\"cid:attachment_788\" \/><\/div>\n\n<br \/><br \/><div>\u00a0<\/div>\r\n<a href=\"http:\/\/localhost\/errands\/satisfaction\/meter\/-\/answer\/4d6a49314e673d3d\/1b7f046991d401785264fc4d35ca3db6\" style=\"font-family:Verdana; font-size:10pt; color:black; font-style:normal;\">optionONE<\/a><br \/><a href=\"http:\/\/localhost\/errands\/satisfaction\/meter\/-\/answer\/4d6a49314e673d3d\/73d05e8f6ec0ca16963a6608b78debd9\" style=\"font-family:Verdana; font-size:10pt; color:black; font-style:normal;\">optionTWO<\/a><br \/><br \/>\n--------- Cention Contact Center - Original message ---------<br \/>\nErrand: #2256-1<br \/>\nFrom: Sany Liew (sany.liew@test.com.my)<br \/>\nSent: 2017\/01\/22 16:53<br \/>\nTo: test-services-area<br \/>\nSubject: Creating test errand via API<br \/>\nQuestion: <br \/>\n<br \/>\nTest message body at Sun, 22 Jan 2017 16:53:04 +0800<br \/>\n<br \/>--------- Cention Contact Center - Original message - End ---------<\/div>",
+//             "subject": "Creating test errand via API",
+//             "to": [
+//               {
+//                 "c3_id": 279,
+//                 "emailAddress": "sany.liew@test.com.my",
+//                 "name": "Sany Liew"
+//               }
+//             ]
+//           }
+//         },
+//         "c3_id": 2256,
+//         "service": {
+//           "c3_id": 16,
+//           "name": "Form",
+//           "type": 19
+//         }
+//       },
+//       "relationships": {
+//         "attachments": {
+//           "data": [
+//             {
+//               "type": "c3_responseattachment",
+//               "id": "788"
+//             },
+//             {
+//               "type": "c3_responseattachment",
+//               "id": "789"
+//             },
+//             {
+//               "type": "c3_responseattachment",
+//               "id": "790"
+//             }
+//           ]
+//         },
+//         "embedded_archives": {
+//           "data": [
+//             {
+//               "type": "c3_areaarchive",
+//               "id": "12"
+//             }
+//           ]
+//         }
+//       }
+//     },
+//     {
+//       "type": "c3_responseattachment",
+//       "id": "788",
+//       "attributes": {
+//         "c3_id": 788
+//       },
+//       "links": {
+//         "self": "http:\/\/localhost\/ng\/api\/json\/c3_responseattachment\/788"
+//       }
+//     }
+//   ],
+//   "meta": {
+//     "api_secret": "123456"
+//   }
+// }

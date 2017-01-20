@@ -71,11 +71,12 @@ func main() {
 				fmt.Fprint(w, s)
 				return
 			}
-			fmt.Println("DEBUG:", cb.Data.ID, cb.Data.Type, cb.Data.Attr.Event,
+			fmt.Println("DEBUG:", cb.Data.ID, cb.Data.Type, cb.Data.Attributes,
 				cb.Meta.Secret)
 			// fmt.Println("DEBUG: content", string(cb.Data.Attr.RawMessage))
 			ae, err = cb.AnswerErrand()
 			if err != nil {
+				fmt.Println("ERROR parse AnswerErrand:", err)
 				w.WriteHeader(http.StatusBadRequest)
 				fmt.Fprintf(w, `{"error": %q}`, err)
 				return
@@ -125,107 +126,3 @@ func init() {
 	flag.StringVar(&endpoint, "e", "", "URL endpoint of Cention application")
 	flag.BoolVar(&simple, "i", false, "Simple parsing without decode JSON")
 }
-
-// SAMPLE - JSONAPI
-// {
-//   "data": {
-//     "type": "c3_callback_answer_errand",
-//     "id": "5",
-//     "attributes": {
-//       "event": 1
-//     },
-//     "relationships": {
-//       "errand": {
-//         "data": {
-//           "type": "c3_errand",
-//           "id": "2238"
-//         }
-//       }
-//     }
-//   },
-//   "included": [
-//     {
-//       "type": "c3_responseattachment",
-//       "id": "708",
-//       "attributes": {
-//         "c3_id": 708
-//       },
-//       "links": {
-//         "self": "https:\/\/localhost\/ng\/api\/json\/c3_responseattachment\/708"
-//       }
-//     },
-//     {
-//       "type": "c3_responseattachment",
-//       "id": "709",
-//       "attributes": {
-//         "c3_id": 709
-//       },
-//       "links": {
-//         "self": "https:\/\/localhost\/ng\/api\/json\/c3_responseattachment\/709"
-//       }
-//     },
-//     {
-//       "type": "c3_areaarchive",
-//       "id": "12",
-//       "attributes": {
-//         "c3_id": 12
-//       },
-//       "links": {
-//         "self": "https:\/\/localhost\/ng\/api\/json\/c3_areaarchive\/12"
-//       }
-//     },
-//     {
-//       "type": "c3_errand",
-//       "id": "2238",
-//       "attributes": {
-//         "answer": {
-//           "c3_id": 1171,
-//           "response": {
-//             "body": "Plain text string",
-//             "c3_id": 3267,
-//             "htmlBody": "<div style=\"font-size:;font-family:;\"><div>HTML text string<\/div>",
-//             "subject": "Creating test errand via API",
-//             "to": [
-//               {
-//                 "c3_id": 279,
-//                 "emailAddress": "sany.liew@test.com.my",
-//                 "name": "Sany Liew"
-//               }
-//             ]
-//           }
-//         },
-//         "c3_id": 2238,
-//         "service": {
-//           "c3_id": 16,
-//           "name": "Form",
-//           "type": 19
-//         }
-//       },
-//       "relationships": {
-//         "attachments": {
-//           "data": [
-//             {
-//               "type": "c3_responseattachment",
-//               "id": "708"
-//             },
-//             {
-//               "type": "c3_responseattachment",
-//               "id": "709"
-//             }
-//           ]
-//         },
-//         "embedded_archives": {
-//           "data": [
-//             {
-//               "type": "c3_areaarchive",
-//               "id": "12"
-//             }
-//           ]
-//         }
-//       }
-//     }
-//   ],
-//   "meta": {
-//     "api_secret": "123456"
-//   }
-// }
