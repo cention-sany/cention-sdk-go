@@ -71,8 +71,14 @@ func main() {
 				fmt.Fprint(w, s)
 				return
 			}
+			var metaStr string
+			if cb.Meta == nil {
+				metaStr = "no Meta"
+			} else {
+				metaStr = fmt.Sprint("Meta.Secret: ", cb.Meta.Secret)
+			}
 			fmt.Println("DEBUG:", cb.Data.ID, cb.Data.Type, cb.Data.Attributes,
-				cb.Meta.Secret)
+				metaStr)
 			// fmt.Println("DEBUG: content", string(cb.Data.Attr.RawMessage))
 			ae, err = cb.AnswerErrand()
 			if err != nil {
