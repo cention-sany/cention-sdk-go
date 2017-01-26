@@ -37,6 +37,11 @@ const (
 	areaArchiveAttachment
 )
 
+const (
+	jsonapiMime = "application/vnd.api+json"
+	rwPrfx      = "/capi"
+)
+
 type CreatedResponse struct {
 	Data struct {
 		Type string `json:"type"`
@@ -65,11 +70,10 @@ type Message struct {
 	As         []*Attachment `json:"attachments,omitempty"`
 }
 
-const (
-	jsonapiMime       = "application/vnd.api+json"
-	ceREST            = "/ng/api/json/c3_errand"
-	getAttachmentREST = "/ng/api/json/c3_responseattachment"
-	getAAREST         = "/ng/api/json/c3_areaarchive"
+var (
+	ceREST            = fmt.Sprint(rwPrfx, "/json/c3_errand")
+	getAttachmentREST = fmt.Sprint(rwPrfx, "/json/c3_responseattachment")
+	getAAREST         = fmt.Sprint(rwPrfx, "/json/c3_areaarchive")
 )
 
 func CreateErrand(ctx context.Context, ep, tk string,
