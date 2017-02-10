@@ -5,6 +5,7 @@ package cention
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"strings"
+	"time"
 
 	"github.com/google/jsonapi"
 	"github.com/mitchellh/mapstructure"
@@ -108,7 +110,16 @@ func CreateErrand(ctx context.Context, ep, tk string,
 	req = req.WithContext(ctx)
 	req.Header.Set("Content-Type", jsonapiMime)
 	req.Header.Set("Authorization", fmt.Sprint("Bearer ", tk))
-	resp, err := http.DefaultClient.Do(req)
+	cli := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
+			TLSHandshakeTimeout:   time.Second * 30,
+			ResponseHeaderTimeout: time.Second * 30,
+			//ExpectContinueTimeout: time.Second * 30,
+			DisableCompression: true,
+		},
+	}
+	resp, err := cli.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -279,10 +290,23 @@ func (a *AnswerErrand) GetNextAttachment(ctx context.Context, ep,
 		return nil, err
 	}
 	defer rc.Close()
+	var (
+		r io.Reader
+		b *bytes.Buffer
+	)
+	if DEBUG {
+		b = new(bytes.Buffer)
+		r = io.TeeReader(rc, b)
+	} else {
+		r = rc
+	}
 	v := new(jsonapi.OnePayload)
-	if err = json.NewDecoder(rc).Decode(v); err != nil {
+	if err = json.NewDecoder(r).Decode(v); err != nil {
 		a.err = err
 		return nil, err
+	}
+	if DEBUG {
+		fmt.Println("Attachment body:", string(b.Bytes()))
 	}
 	vv, exist := v.Data.Attributes["attachment"]
 	if !exist {
