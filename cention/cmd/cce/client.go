@@ -18,7 +18,7 @@ const maxSafeRq = 50
 var (
 	concurrent                 int
 	withAttachment, insaneTest bool
-	token, endpoint            string
+	token, endpoint, closeUser string
 
 	wg sync.WaitGroup
 )
@@ -78,7 +78,18 @@ func main() {
 					bytes.NewReader([]byte(`Orange Juice!`)))
 				m.As = []*cention.Attachment{a1, a2}
 			}
-			resp, err := cention.CreateErrand(ctx, endpoint, token, m)
+			var a *cention.Answer
+			if closeUser != "" {
+				n, _ := strconv.Atoi(closeUser)
+				a = new(cention.Answer)
+				a.Subject = "This is subject for ANSWER"
+				a.Body = "This is plain answer text"
+				if n >= 0 {
+					a.UserID = strconv.Itoa(n)
+					a.UserType = "CENTION"
+				}
+			}
+			resp, err := cention.CreateErrand(ctx, endpoint, token, m, a)
 			if err != nil {
 				fmt.Println("Rq #:", i, "ERROR:", err)
 				select {
@@ -110,4 +121,5 @@ func init() {
 	flag.IntVar(&concurrent, "c", 1, "Number of requests concurrently")
 	flag.BoolVar(&withAttachment, "a", false, "Enable attachment sending")
 	flag.BoolVar(&insaneTest, "insane", false, "")
+	flag.StringVar(&closeUser, "u", "", "Create errand that will be closed by this user ID (-1 will be closed by system)")
 }

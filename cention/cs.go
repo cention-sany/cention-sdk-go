@@ -58,6 +58,7 @@ type CE struct {
 
 type Attr struct {
 	Msg *Message `json:"msg"`
+	Ans *Answer  `json:"answer"`
 }
 
 type Message struct {
@@ -70,6 +71,12 @@ type Message struct {
 	As         []*Attachment `json:"attachments,omitempty"`
 }
 
+type Answer struct {
+	Message
+	UserType string `json:"user_type"`
+	UserID   string `json:"user_id"`
+}
+
 var (
 	ceREST            = fmt.Sprint(rwPrfx, "/json/c3_errand")
 	getAttachmentREST = fmt.Sprint(rwPrfx, "/json/c3_responseattachment")
@@ -77,13 +84,14 @@ var (
 )
 
 func CreateErrand(ctx context.Context, ep, tk string,
-	m *Message) (*CreatedResponse, error) {
+	m *Message, ans *Answer) (*CreatedResponse, error) {
 	var ce CE
 	ce.Data.Type = "c3_errand"
 	for _, a := range m.As {
 		a.Id = 0 // errand creation can not has id
 	}
 	ce.Data.Msg = m
+	ce.Data.Ans = ans
 	b := new(bytes.Buffer)
 	err := json.NewEncoder(b).Encode(&ce)
 	if err != nil {
