@@ -15,7 +15,7 @@ import (
 	"net/http/httputil"
 	"strings"
 
-	"github.com/google/jsonapi"
+	"github.com/cention-sany/jsonapi"
 	"github.com/mitchellh/mapstructure"
 )
 
@@ -58,7 +58,7 @@ type CE struct {
 
 type Attr struct {
 	Msg *Message `json:"msg"`
-	Ans *Answer  `json:"answer"`
+	Ans *Answer  `json:"answer,omitempty"`
 }
 
 type Message struct {
@@ -67,7 +67,7 @@ type Message struct {
 	From       string        `json:"from"`
 	Subject    string        `json:"subject"`
 	Body       string        `json:"body"`
-	HtmlBody   string        `json:"htmlBody"`
+	HtmlBody   string        `json:"html_body"`
 	As         []*Attachment `json:"attachments,omitempty"`
 }
 
@@ -77,16 +77,23 @@ type Answer struct {
 	UserID   string `json:"user_id"`
 }
 
+const (
+	ceJT = "c3_new_errands"
+	aeJT = "c3_answer_errands"
+	raJT = "c3_response_attachments"
+	aaJT = "c3_area_archives"
+)
+
 var (
-	ceREST            = fmt.Sprint(rwPrfx, "/json/c3_errand")
-	getAttachmentREST = fmt.Sprint(rwPrfx, "/json/c3_responseattachment")
-	getAAREST         = fmt.Sprint(rwPrfx, "/json/c3_areaarchive")
+	ceREST            = fmt.Sprint(rwPrfx, "/json/", ceJT)
+	getAttachmentREST = fmt.Sprint(rwPrfx, "/json/", raJT)
+	getAAREST         = fmt.Sprint(rwPrfx, "/json/", aaJT)
 )
 
 func CreateErrand(ctx context.Context, ep, tk string,
 	m *Message, ans *Answer) (*CreatedResponse, error) {
 	var ce CE
-	ce.Data.Type = "c3_errand"
+	ce.Data.Type = ceJT
 	for _, a := range m.As {
 		a.Id = 0 // errand creation can not has id
 	}
@@ -173,14 +180,14 @@ func (c *Callback) AnswerErrand() (*AnswerErrand, error) {
 	as := make([]*attachmentNode, 0, len(nodes))
 	for _, n := range nodes {
 		switch n.Type {
-		case "c3_errand":
+		case aeJT:
 			a = new(AnswerErrand)
 			if err := mapstructure.Decode(n.Attributes, a); err != nil {
 				return nil, err
 			}
-		case "c3_responseattachment":
+		case raJT:
 			addAttachment(&as, normalAttachment, n)
-		case "c3_areaarchive":
+		case aaJT:
 			addAttachment(&as, areaArchiveAttachment, n)
 		}
 	}
@@ -194,8 +201,11 @@ func (c *Callback) AnswerErrand() (*AnswerErrand, error) {
 
 func addAttachment(an *[]*attachmentNode, t int, n *jsonapi.Node) {
 	var s string
-	if v, exist := (*n.Links)["self"]; exist {
-		s, _ = v.(string)
+	if v, ok := (*n.Links)["self"]; ok {
+		if s, ok = v.(string); !ok {
+			link, _ := v.(jsonapi.Link)
+			s = link.Href
+		}
 	}
 	*an = append(*an, &attachmentNode{
 		id: n.ID, t: t, l: s,
@@ -209,11 +219,11 @@ type AnswerErrand struct {
 		Response struct {
 			ID       int    `mapstructure:"c3_id"`
 			Body     string `mapstructure:"body"`
-			HtmlBody string `mapstructure:"htmlBody"`
+			HtmlBody string `mapstructure:"html_body"`
 			Subject  string `mapstructure:"subject"`
 			To       []struct {
 				ID      int    `mapstructure:"c3_id"`
-				Address string `mapstructure:"emailAddress"`
+				Address string `mapstructure:"email_address"`
 				Name    string `mapstructure:"name"`
 			} `mapstructure:"to"`
 		} `mapstructure:"response"`
@@ -362,7 +372,7 @@ func ParseWithSecret(r *http.Request, s string) (*Callback, error) {
 // Sample create errand data
 // {
 //   "data": {
-//     "type": "c3_errand",
+//     "type": "c3_new_errands",
 //     "attributes": {
 //       "msg": {
 //         "message_id": "msgid_1485096554",
@@ -391,7 +401,7 @@ func ParseWithSecret(r *http.Request, s string) (*Callback, error) {
 // SAMPLE - JSONAPI callback
 // {
 //   "data": {
-//     "type": "c3_callback_answer_errand",
+//     "type": "c3_callback_answer_errands",
 //     "id": "76",
 //     "attributes": {
 //       "event": 1
@@ -399,7 +409,7 @@ func ParseWithSecret(r *http.Request, s string) (*Callback, error) {
 //     "relationships": {
 //       "errand": {
 //         "data": {
-//           "type": "c3_errand",
+//           "type": "c3_answer_errands",
 //           "id": "2256"
 //         }
 //       }
@@ -407,37 +417,39 @@ func ParseWithSecret(r *http.Request, s string) (*Callback, error) {
 //   },
 //   "included": [
 //     {
-//       "type": "c3_responseattachment",
+//       "type": "c3_response_attachments",
 //       "id": "789",
 //       "attributes": {
 //         "c3_id": 789
 //       },
 //       "links": {
-//         "self": "http:\/\/localhost\/ng\/api\/json\/c3_responseattachment\/789"
+//         "self": "http:\/\/localhost\/ng\/api\/json\/c3_response_attachments\/789"
 //       }
 //     },
 //     {
-//       "type": "c3_responseattachment",
+//       "type": "c3_response_attachments",
 //       "id": "790",
 //       "attributes": {
 //         "c3_id": 790
 //       },
 //       "links": {
-//         "self": "http:\/\/localhost\/ng\/api\/json\/c3_responseattachment\/790"
+//         "self": "http:\/\/localhost\/ng\/api\/json\/c3_response_attachments\/790"
 //       }
 //     },
 //     {
-//       "type": "c3_areaarchive",
+//       "type": "c3_area_archives",
 //       "id": "12",
 //       "attributes": {
 //         "c3_id": 12
 //       },
 //       "links": {
-//         "self": "http:\/\/localhost\/ng\/api\/json\/c3_areaarchive\/12"
+//         "self": {
+//           "href": "http:\/\/localhost\/ng\/api\/json\/c3_area_archives\/12"
+//         }
 //       }
 //     },
 //     {
-//       "type": "c3_errand",
+//       "type": "c3_answer_errands",
 //       "id": "2256",
 //       "attributes": {
 //         "answer": {
@@ -467,15 +479,15 @@ func ParseWithSecret(r *http.Request, s string) (*Callback, error) {
 //         "attachments": {
 //           "data": [
 //             {
-//               "type": "c3_responseattachment",
+//               "type": "c3_response_attachments",
 //               "id": "788"
 //             },
 //             {
-//               "type": "c3_responseattachment",
+//               "type": "c3_response_attachments",
 //               "id": "789"
 //             },
 //             {
-//               "type": "c3_responseattachment",
+//               "type": "c3_response_attachments",
 //               "id": "790"
 //             }
 //           ]
@@ -483,7 +495,7 @@ func ParseWithSecret(r *http.Request, s string) (*Callback, error) {
 //         "embedded_archives": {
 //           "data": [
 //             {
-//               "type": "c3_areaarchive",
+//               "type": "c3_area_archives",
 //               "id": "12"
 //             }
 //           ]
@@ -491,13 +503,13 @@ func ParseWithSecret(r *http.Request, s string) (*Callback, error) {
 //       }
 //     },
 //     {
-//       "type": "c3_responseattachment",
+//       "type": "c3_response_attachments",
 //       "id": "788",
 //       "attributes": {
 //         "c3_id": 788
 //       },
 //       "links": {
-//         "self": "http:\/\/localhost\/ng\/api\/json\/c3_responseattachment\/788"
+//         "self": "http:\/\/localhost\/ng\/api\/json\/c3_response_attachments\/788"
 //       }
 //     }
 //   ],
